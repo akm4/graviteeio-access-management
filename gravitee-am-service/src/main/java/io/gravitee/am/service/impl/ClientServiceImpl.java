@@ -16,6 +16,8 @@
 package io.gravitee.am.service.impl;
 
 import io.gravitee.am.common.oauth2.GrantType;
+import io.gravitee.am.common.oidc.ResponseType;
+import io.gravitee.am.common.oidc.Scope;
 import io.gravitee.am.common.utils.RandomString;
 import io.gravitee.am.common.utils.SecureRandomString;
 import io.gravitee.am.identityprovider.api.User;
@@ -260,24 +262,36 @@ public class ClientServiceImpl implements ClientService {
     public Single<Client> create(Client client) {
         LOGGER.debug("Create a client {} for domain {}", client, client.getDomain());
 
-        if(client.getDomain()==null || client.getDomain().trim().isEmpty()) {
+        if(client.getDomain() == null || client.getDomain().trim().isEmpty()) {
             return Single.error(new InvalidClientMetadataException("No domain set on client"));
         }
 
-        /* openid response metadata */
+        // set client technical id
         client.setId(RandomString.generate());
-        //client_id & client_secret may be already informed if created through UI
-        if(client.getClientId()==null) {
+        // client_id & client_secret may be already informed if created through UI
+        if (client.getClientId() == null) {
             client.setClientId(SecureRandomString.generate());
         }
-        if(client.getClientSecret()==null || client.getClientSecret().trim().isEmpty()) {
+        if (client.getClientSecret() == null || client.getClientSecret().trim().isEmpty()) {
             client.setClientSecret(SecureRandomString.generate());
         }
-        if(client.getClientName()==null || client.getClientName().trim().isEmpty()) {
+        if (client.getClientName() == null || client.getClientName().trim().isEmpty()) {
             client.setClientName("Unknown Client");
         }
+        // set at least 'openid' scope for specific type of client
+        if (client.getScopes() == null || client.getScopes().isEmpty() || !client.getScopes().contains(Scope.OPENID.getKey())) {
+            if (mustHaveOpenIDScope(client)) {
+                if (client.getScopes() == null) {
+                    client.setScopes(Collections.singletonList(Scope.OPENID.getKey()));
+                } else {
+                    List<String> scopes = new ArrayList<>(client.getScopes());
+                    scopes.add(Scope.OPENID.getKey());
+                    client.setScopes(scopes);
+                }
+            }
+        }
 
-        /* GRAVITEE.IO custom fields */
+        // custom fields
         client.setAccessTokenValiditySeconds(Client.DEFAULT_ACCESS_TOKEN_VALIDITY_SECONDS);
         client.setRefreshTokenValiditySeconds(Client.DEFAULT_REFRESH_TOKEN_VALIDITY_SECONDS);
         client.setIdTokenValiditySeconds(Client.DEFAULT_ID_TOKEN_VALIDITY_SECONDS);
@@ -321,6 +335,26 @@ public class ClientServiceImpl implements ClientService {
         LOGGER.debug("Renew client secret for client {} in domain {}", id, domain);
         return applicationService.renewClientSecret(domain, id, principal)
                 .map(Application::convert);
+    }
+
+    private boolean mustHaveOpenIDScope(Client client) {
+        if (client.getAuthorizedGrantTypes() != null &&
+                (client.getAuthorizedGrantTypes().contains(GrantType.AUTHORIZATION_CODE) ||
+                        client.getAuthorizedGrantTypes().contains(GrantType.IMPLICIT))) {
+            return true;
+        }
+
+        if (client.getResponseTypes() != null &&
+                (client.getResponseTypes().contains(ResponseType.ID_TOKEN) ||
+                        client.getResponseTypes().contains(ResponseType.ID_TOKEN_TOKEN)||
+                        client.getResponseTypes().contains(ResponseType.CODE_ID_TOKEN_TOKEN) ||
+                        client.getResponseTypes().contains(ResponseType.CODE_ID_TOKEN) ||
+                        client.getResponseTypes().contains(ResponseType.CODE_TOKEN) ||
+                        client.getResponseTypes().contains(io.gravitee.am.common.oauth2.ResponseType.CODE) ||
+                        client.getResponseTypes().contains(io.gravitee.am.common.oauth2.ResponseType.TOKEN))) {
+            return true;
+        }
+        return false;
     }
 
     private Application convert(Client client) {
